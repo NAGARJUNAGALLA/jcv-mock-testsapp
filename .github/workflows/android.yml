@@ -18,11 +18,15 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Generate Gradle Wrapper
-        run: gradle wrapper --gradle-version 8.2
+      # Tell GitHub to explicitly install and use Gradle 8.2
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.2'
 
+      # Run the build command using the specific Gradle version we just set up
       - name: Build Debug APK and AAB
-        run: ./gradlew assembleDebug bundleDebug
+        run: gradle assembleDebug bundleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

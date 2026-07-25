@@ -32,11 +32,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
+import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE, 
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -104,6 +110,10 @@ fun MathJaxText(htmlText: String, modifier: Modifier = Modifier) {
 }
 @Composable
 fun AppNavigation(viewModel: ExamViewModel = viewModel()) {
+    BackHandler(enabled = true) {
+        // Leaving this empty means the back button does nothing,
+        // preventing the app from closing.
+    }
     when (viewModel.appState.value) {
         "LOADING" -> LoadingScreen(viewModel.errorMessage.value)
         "MENU" -> MenuScreen(viewModel)

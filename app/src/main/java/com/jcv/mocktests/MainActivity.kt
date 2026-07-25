@@ -37,17 +37,28 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ExamScreen(viewModel: ExamViewModel = viewModel()) {
     if (viewModel.isLoading.value) {
-        // THIS IS THE UPDATED LOADING SCREEN
         Box(
             contentAlignment = Alignment.Center, 
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.White)
+            modifier = Modifier.fillMaxSize().background(Color.White)
         ) {
             CircularProgressIndicator(
-                color = Color(0xFF673AB7), // Deep purple matching your screenshot
+                color = Color(0xFF673AB7),
                 strokeWidth = 4.dp,
                 modifier = Modifier.size(60.dp)
+            )
+        }
+    } else if (viewModel.errorMessage.value != null) {
+        // THIS WILL SHOW IF THE GOOGLE SHEET FAILS TO LOAD
+        Box(
+            contentAlignment = Alignment.Center, 
+            modifier = Modifier.fillMaxSize().background(Color.White)
+        ) {
+            Text(
+                text = viewModel.errorMessage.value!!, 
+                color = Color.Red, 
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(24.dp)
             )
         }
     } else if (viewModel.isExamFinished.value) {

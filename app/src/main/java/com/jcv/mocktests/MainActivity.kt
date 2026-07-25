@@ -49,8 +49,6 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MathJaxText(htmlText: String, modifier: Modifier = Modifier) {
-    // Escaping Kotlin's string interpolation by isolating the dollar sign
-    val dollar = "$"
     AndroidView(
         modifier = modifier,
         factory = { context ->
@@ -66,40 +64,44 @@ fun MathJaxText(htmlText: String, modifier: Modifier = Modifier) {
             }
         },
         update = { webView ->
+            // Using ${'$'} prevents Kotlin from trying to evaluate variables that don't exist,
+            // ensuring the Javascript receives exact '$' and '$$' characters for configuration.
             val content = """
                 <!DOCTYPE html>
                 <html>
                 <head>
                     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
                     <script>
-                        window.MathJax = {
+                        MathJax = {
                             tex: { 
-                                inlineMath: [['$dollar', '$dollar'], ['\\(', '\\)']], 
-                                displayMath: [['$dollar$dollar', '$dollar$dollar'], ['\\[', '\\]']] 
-                            },
-                            startup: { typeset: false }
+                                inlineMath: [['${'$'}', '${'$'}'], ['\\(', '\\)']], 
+                                displayMath: [['${'$'}${'$'}', '${'$'}${'$'}'], ['\\[', '\\]']] 
+                            }
                         };
                     </script>
                     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
                     <style>
-                        body { font-family: 'sans-serif'; font-size: 16px; color: #111827; margin: 0; padding: 2px; word-wrap: break-word; background: transparent; }
+                        body { 
+                            font-family: 'sans-serif'; 
+                            font-size: 16px; 
+                            color: #111827; 
+                            margin: 0; 
+                            padding: 2px; 
+                            word-wrap: break-word; 
+                            background: transparent; 
+                        }
                     </style>
                 </head>
                 <body>
                     $htmlText
-                    <script>
-                        if (window.MathJax && MathJax.typesetPromise) {
-                            MathJax.typesetPromise();
-                        }
-                    </script>
                 </body>
                 </html>
             """.trimIndent()
+            
             webView.loadDataWithBaseURL("https://localhost", content, "text/html", "UTF-8", null)
         }
     )
 }
-
 @Composable
 fun AppNavigation(viewModel: ExamViewModel = viewModel()) {
     when (viewModel.appState.value) {

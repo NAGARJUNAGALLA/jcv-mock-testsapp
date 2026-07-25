@@ -1,6 +1,7 @@
 package com.jcv.mocktests
 
 import android.os.Bundle
+import android.view.ViewGroup
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -46,13 +47,18 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// ----------------- MathJax WebView Composable -----------------
 @Composable
 fun MathJaxText(htmlText: String, modifier: Modifier = Modifier) {
+    // Escaping Kotlin's string interpolation by isolating the dollar sign
+    val dollar = "$"
     AndroidView(
         modifier = modifier,
         factory = { context ->
             WebView(context).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
                 settings.javaScriptEnabled = true
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 isVerticalScrollBarEnabled = false
@@ -67,13 +73,16 @@ fun MathJaxText(htmlText: String, modifier: Modifier = Modifier) {
                     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
                     <script>
                         window.MathJax = {
-                            tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] },
+                            tex: { 
+                                inlineMath: [['$dollar', '$dollar'], ['\\(', '\\)']], 
+                                displayMath: [['$dollar$dollar', '$dollar$dollar'], ['\\[', '\\]']] 
+                            },
                             startup: { typeset: false }
                         };
                     </script>
                     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
                     <style>
-                        body { font-family: 'sans-serif'; font-size: 16px; color: #111827; margin: 0; padding: 0; word-wrap: break-word; background: transparent; }
+                        body { font-family: 'sans-serif'; font-size: 16px; color: #111827; margin: 0; padding: 2px; word-wrap: break-word; background: transparent; }
                     </style>
                 </head>
                 <body>
@@ -90,8 +99,6 @@ fun MathJaxText(htmlText: String, modifier: Modifier = Modifier) {
         }
     )
 }
-// --------------------------------------------------------------
-
 
 @Composable
 fun AppNavigation(viewModel: ExamViewModel = viewModel()) {
@@ -223,11 +230,11 @@ fun CBTScreen(viewModel: ExamViewModel) {
     val isReview = viewModel.appState.value == "REVIEW"
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    val scrollState = rememberScrollState() // Replaced LazyColumn with ScrollState for better WebView performance
+    val scrollState = rememberScrollState()
 
     ModalNavigationDrawer(
         drawerState = drawerState,
-        gesturesEnabled = true, // CHANGED: Allows closing drawer by tapping anywhere outside
+        gesturesEnabled = true,
         drawerContent = {
             ModalDrawerSheet(modifier = Modifier.width(320.dp).background(Color.White)) {
                 PaletteDrawer(viewModel) { scope.launch { drawerState.close() } }
@@ -240,7 +247,7 @@ fun CBTScreen(viewModel: ExamViewModel) {
                     title = { 
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (isReview) {
-                                Text("REVIEW MODE", fontSize = 12.sp, modifier = Modifier.background(Color(0x33FFFFFF), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
+                                Text("REVIEW", fontSize = 12.sp, modifier = Modifier.background(Color(0x33FFFFFF), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
                             }
                             Text("JCV MOCK TESTS", color = Color.White, fontWeight = FontWeight.Black, fontSize = 18.sp, maxLines = 1)
@@ -249,7 +256,7 @@ fun CBTScreen(viewModel: ExamViewModel) {
                     actions = {
                         if (isReview) {
                             TextButton(onClick = { viewModel.appState.value = "MENU" }) {
-                                Text("Exit Review", color = Color.White, fontWeight = FontWeight.Bold)
+                                Text("Exit", color = Color.White, fontWeight = FontWeight.Bold)
                             }
                         } else {
                             val minutes = viewModel.timeLeft.value / 60
@@ -285,12 +292,10 @@ fun CBTScreen(viewModel: ExamViewModel) {
                 
                 val currentQ = test.sections[viewModel.currentSectionIndex.value].questions[viewModel.currentQuestionIndex.value]
                 
-                // Using Column + VerticalScroll prevents WebViews from reloading/flashing during recycling
                 Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState)) {
                     Text("Q ${currentQ.globalId}.", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.Black)
                     Spacer(modifier = Modifier.height(8.dp))
                     
-                    // Render Question using MathJax
                     Box(modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 40.dp)) {
                         MathJaxText(htmlText = currentQ.text, modifier = Modifier.fillMaxWidth())
                     }
@@ -328,8 +333,6 @@ fun CBTScreen(viewModel: ExamViewModel) {
                                 }
                                 Spacer(modifier = Modifier.width(12.dp))
                                 
-                                // Wrapping MathJax inside a box with a transparent clickable overlay. 
-                                // This intercepts the touch so the WebView doesn't swallow it.
                                 Box(modifier = Modifier.weight(1f).defaultMinSize(minHeight = 32.dp)) {
                                     MathJaxText(htmlText = option, modifier = Modifier.fillMaxWidth())
                                     Box(
@@ -340,7 +343,7 @@ fun CBTScreen(viewModel: ExamViewModel) {
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(40.dp)) // padding at bottom
+                    Spacer(modifier = Modifier.height(40.dp)) 
                 }
             }
         }

@@ -18,15 +18,12 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      # Step 1: Generate wrapper on the server
       - name: Generate Gradle Wrapper
         run: gradle wrapper --gradle-version 8.2
 
-      # Step 2: Build using the wrapper targeting the app module directly
       - name: Build Debug APK and AAB
-        run: ./gradlew :app:assembleDebug :app:bundleDebug
+        run: ./gradlew assembleDebug bundleDebug
 
-      # Step 3: Upload Artifacts
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

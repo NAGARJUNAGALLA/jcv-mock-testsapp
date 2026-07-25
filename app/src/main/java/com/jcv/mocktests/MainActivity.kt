@@ -49,7 +49,7 @@ fun AppNavigation(viewModel: ExamViewModel = viewModel()) {
         "LOADING" -> LoadingScreen(viewModel.errorMessage.value)
         "MENU" -> MenuScreen(viewModel)
         "INSTRUCTIONS" -> InstructionsScreen(viewModel)
-        "EXAM" -> CBTScreen(viewModel)
+        "EXAM", "REVIEW" -> CBTScreen(viewModel)
         "RESULTS" -> ResultsScreen(viewModel)
     }
 }
@@ -82,6 +82,8 @@ fun MenuScreen(viewModel: ExamViewModel) {
     ) { padding ->
         LazyColumn(modifier = Modifier.padding(padding).fillMaxSize().background(Color(0xFFF8FAFC)).padding(16.dp)) {
             items(viewModel.availableTests) { test ->
+                val score = viewModel.testScores[test.title]
+                
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp).clickable { viewModel.selectTest(test) },
                     colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -90,6 +92,23 @@ fun MenuScreen(viewModel: ExamViewModel) {
                     Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(test.title, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         Text("${test.sections.size} Sections • ${test.totalQuestions} Questions", color = Color.Gray, fontSize = 14.sp)
+                        
+                        // Show Score Badge
+                        if (score != null) {
+                            Text(
+                                text = "Score: $score / ${test.totalQuestions}", 
+                                color = Color(0xFF16A34A), 
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(top = 12.dp).background(Color(0xFFDCFCE7), RoundedCornerShape(4.dp)).padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        } else {
+                            Text(
+                                text = "Not Attempted", 
+                                color = Color.DarkGray, 
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(top = 12.dp).background(Color(0xFFF1F5F9), RoundedCornerShape(4.dp)).padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -107,6 +126,11 @@ fun InstructionsScreen(viewModel: ExamViewModel) {
         topBar = {
             TopAppBar(
                 title = { Text("Instructions", color = Color.White) },
+                navigationIcon = {
+                    TextButton(onClick = { viewModel.appState.value = "MENU" }) {
+                        Text("Back", color = Color.White)
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF104E8B))
             )
         }
@@ -118,7 +142,6 @@ fun InstructionsScreen(viewModel: ExamViewModel) {
                 Text("Total Questions: ${test.totalQuestions} | Time: ${test.totalQuestions} Mins", modifier = Modifier.fillMaxWidth().background(Color(0xFFF1F5F9)).padding(8.dp), textAlign = TextAlign.Center, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(24.dp))
                 
-                // Status Legend
                 StatusLegendItem(QuestionStatus.NOT_VISITED, "Not Visited")
                 StatusLegendItem(QuestionStatus.NOT_ANSWERED, "Not Answered")
                 StatusLegendItem(QuestionStatus.ANSWERED, "Answered")
@@ -148,6 +171,7 @@ fun InstructionsScreen(viewModel: ExamViewModel) {
 @Composable
 fun CBTScreen(viewModel: ExamViewModel) {
     val test = viewModel.selectedTest.value ?: return
+    val isReview = viewModel.appState.value == "REVIEW"
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
@@ -163,11 +187,25 @@ fun CBTScreen(viewModel: ExamViewModel) {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(test.title, color = Color.White, fontSize = 16.sp, maxLines = 1) },
+                    title = { 
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (isReview) {
+                                Text("REVIEW MODE", fontSize = 12.sp, modifier = Modifier.background(Color(0x33FFFFFF), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
+                            Text(test.title, color = Color.White, fontSize = 16.sp, maxLines = 1)
+                        }
+                    },
                     actions = {
-                        val minutes = viewModel.timeLeft.value / 60
-                        val seconds = viewModel.timeLeft.value % 60
-                        Text(String.format("%02d:%02d", minutes, seconds), color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 16.dp))
+                        if (isReview) {
+                            TextButton(onClick = { viewModel.appState.value = "MENU" }) {
+                                Text("Exit Review", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            val minutes = viewModel.timeLeft.value / 60
+                            val seconds = viewModel.timeLeft.value % 60
+                            Text(String.format("%02d:%02d", minutes, seconds), color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 16.dp))
+                        }
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(Icons.Default.Menu, contentDescription = "Palette", tint = Color.White)
                         }
@@ -178,7 +216,6 @@ fun CBTScreen(viewModel: ExamViewModel) {
             bottomBar = { ExamBottomBar(viewModel) }
         ) { padding ->
             Column(modifier = Modifier.padding(padding).fillMaxSize().background(Color(0xFFF8FAFC))) {
-                // Section Tabs
                 ScrollableTabRow(
                     selectedTabIndex = viewModel.currentSectionIndex.value,
                     containerColor = Color(0xFFE2E8F0),
@@ -196,7 +233,6 @@ fun CBTScreen(viewModel: ExamViewModel) {
                     }
                 }
                 
-                // Question Area
                 val currentQ = test.sections[viewModel.currentSectionIndex.value].questions[viewModel.currentQuestionIndex.value]
                 LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
                     item {
@@ -208,14 +244,33 @@ fun CBTScreen(viewModel: ExamViewModel) {
                     
                     itemsIndexed(currentQ.options) { index, option ->
                         val isSelected = currentQ.selectedOption == index
+                        val isCorrect = currentQ.correctIndex == index
+                        
+                        // STYLING LOGIC FOR REVIEW VS EXAM
+                        val cardBg = if (isReview) {
+                            if (isCorrect) Color(0xFFDCFCE7) // Green for correct
+                            else if (isSelected) Color(0xFFFEE2E2) // Red for wrong selection
+                            else Color.White
+                        } else {
+                            if (isSelected) Color(0xFFE0F2FE) else Color.White
+                        }
+                        
+                        val borderCol = if (isReview) {
+                            if (isCorrect) Color(0xFF22C55E)
+                            else if (isSelected) Color(0xFFEF4444)
+                            else Color(0xFFE2E8F0)
+                        } else {
+                            if (isSelected) Color(0xFF60A5FA) else Color(0xFFE2E8F0)
+                        }
+
                         Card(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp).clickable { viewModel.selectOption(index) },
-                            colors = CardDefaults.cardColors(containerColor = if (isSelected) Color(0xFFE0F2FE) else Color.White),
-                            border = BorderStroke(1.dp, if (isSelected) Color(0xFF60A5FA) else Color(0xFFE2E8F0))
+                            colors = CardDefaults.cardColors(containerColor = cardBg),
+                            border = BorderStroke(1.dp, borderCol)
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(12.dp)) {
-                                Box(modifier = Modifier.size(28.dp).clip(CircleShape).background(if (isSelected) Color(0xFF1E90FF) else Color(0xFFF1F5F9)), contentAlignment = Alignment.Center) {
-                                    Text(('A' + index).toString(), color = if (isSelected) Color.White else Color.Black, fontWeight = FontWeight.Bold)
+                                Box(modifier = Modifier.size(28.dp).clip(CircleShape).background(if (isReview && isCorrect) Color(0xFF22C55E) else if (isReview && isSelected) Color(0xFFEF4444) else if (isSelected) Color(0xFF1E90FF) else Color(0xFFF1F5F9)), contentAlignment = Alignment.Center) {
+                                    Text(('A' + index).toString(), color = if (isSelected || (isReview && isCorrect)) Color.White else Color.Black, fontWeight = FontWeight.Bold)
                                 }
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Text(option, fontSize = 16.sp)
@@ -230,56 +285,87 @@ fun CBTScreen(viewModel: ExamViewModel) {
 
 @Composable
 fun ExamBottomBar(viewModel: ExamViewModel) {
+    val isReview = viewModel.appState.value == "REVIEW"
+    
     Column(modifier = Modifier.fillMaxWidth().background(Color.White).border(1.dp, Color(0xFFE2E8F0)).padding(8.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Button(onClick = { viewModel.moveToPrevious() }, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black), border = BorderStroke(1.dp, Color.Gray), modifier = Modifier.weight(1f)) {
-                Text("Prev", fontSize = 12.sp)
+        if (isReview) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Button(onClick = { viewModel.moveToPrevious() }, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black), border = BorderStroke(1.dp, Color.Gray), modifier = Modifier.weight(1f)) {
+                    Text("Previous", fontSize = 14.sp)
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(onClick = { viewModel.saveAndNext() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E90FF)), modifier = Modifier.weight(1f)) {
+                    Text("Next", fontSize = 14.sp)
+                }
             }
-            Spacer(modifier = Modifier.width(4.dp))
-            Button(onClick = { viewModel.markAndNext() }, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF7E22CE)), border = BorderStroke(1.dp, Color(0xFF9333EA)), modifier = Modifier.weight(1f)) {
-                Text("Mark", fontSize = 12.sp)
+        } else {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Button(onClick = { viewModel.moveToPrevious() }, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black), border = BorderStroke(1.dp, Color.Gray), modifier = Modifier.weight(1f)) {
+                    Text("Prev", fontSize = 12.sp)
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                Button(onClick = { viewModel.markAndNext() }, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF7E22CE)), border = BorderStroke(1.dp, Color(0xFF9333EA)), modifier = Modifier.weight(1f)) {
+                    Text("Mark", fontSize = 12.sp)
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                Button(onClick = { viewModel.clearResponse() }, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black), border = BorderStroke(1.dp, Color.Gray), modifier = Modifier.weight(1f)) {
+                    Text("Clear", fontSize = 12.sp)
+                }
             }
-            Spacer(modifier = Modifier.width(4.dp))
-            Button(onClick = { viewModel.clearResponse() }, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black), border = BorderStroke(1.dp, Color.Gray), modifier = Modifier.weight(1f)) {
-                Text("Clear", fontSize = 12.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(onClick = { viewModel.saveAndNext() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E90FF)), modifier = Modifier.fillMaxWidth()) {
+                Text("Save & Next", fontWeight = FontWeight.Bold)
             }
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-        Button(onClick = { viewModel.saveAndNext() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E90FF)), modifier = Modifier.fillMaxWidth()) {
-            Text("Save & Next", fontWeight = FontWeight.Bold)
         }
     }
 }
 
 @Composable
 fun PaletteDrawer(viewModel: ExamViewModel, closeDrawer: () -> Unit) {
-    val stats = viewModel.getStats()
+    val isReview = viewModel.appState.value == "REVIEW"
     val test = viewModel.selectedTest.value ?: return
     val currentSec = test.sections[viewModel.currentSectionIndex.value]
 
     Column(modifier = Modifier.fillMaxSize().background(Color(0xFFF8FAFC))) {
-        // Stats Grid
         Column(modifier = Modifier.background(Color.White).padding(16.dp).fillMaxWidth()) {
             Text("Palette Overview", fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.padding(bottom = 12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                StatusLegendItem(QuestionStatus.ANSWERED, "Ans (${stats[QuestionStatus.ANSWERED]})")
-                StatusLegendItem(QuestionStatus.NOT_ANSWERED, "Not Ans (${stats[QuestionStatus.NOT_ANSWERED]})")
-            }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                StatusLegendItem(QuestionStatus.NOT_VISITED, "Not Visited (${stats[QuestionStatus.NOT_VISITED]})")
-                StatusLegendItem(QuestionStatus.MARKED_FOR_REVIEW, "Marked (${stats[QuestionStatus.MARKED_FOR_REVIEW]})")
+            
+            if (isReview) {
+                val reviewStats = viewModel.getReviewStats()
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
+                    Text("Correct: ${reviewStats.first}", color = Color(0xFF16A34A), fontWeight = FontWeight.Bold)
+                    Text("Incorrect: ${reviewStats.second}", color = Color(0xFFDC2626), fontWeight = FontWeight.Bold)
+                }
+            } else {
+                val stats = viewModel.getStats()
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatusLegendItem(QuestionStatus.ANSWERED, "Ans (${stats[QuestionStatus.ANSWERED]})")
+                    StatusLegendItem(QuestionStatus.NOT_ANSWERED, "Not Ans (${stats[QuestionStatus.NOT_ANSWERED]})")
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatusLegendItem(QuestionStatus.NOT_VISITED, "Not Visited (${stats[QuestionStatus.NOT_VISITED]})")
+                    StatusLegendItem(QuestionStatus.MARKED_FOR_REVIEW, "Marked (${stats[QuestionStatus.MARKED_FOR_REVIEW]})")
+                }
             }
         }
         
         Divider()
-        
-        // Question Grid
         Text(currentSec.name, fontWeight = FontWeight.Bold, modifier = Modifier.padding(16.dp))
+        
         LazyVerticalGrid(columns = GridCells.Fixed(4), modifier = Modifier.weight(1f).padding(horizontal = 16.dp)) {
             items(currentSec.questions.size) { qIndex ->
                 val q = currentSec.questions[qIndex]
-                val shape = getShapeForStatus(q.status)
-                val colorTuple = getColorForStatus(q.status)
+                
+                // Review mode shapes vs Exam mode shapes
+                val shape = if (isReview) RoundedCornerShape(4.dp) else getShapeForStatus(q.status)
+                val colorTuple = if (isReview) {
+                    if (q.selectedOption != null) {
+                        if (q.selectedOption == q.correctIndex) Triple(Color(0xFF22C55E), Color(0xFF16A34A), Color.White) // Correct -> Green
+                        else Triple(Color(0xFFEF4444), Color(0xFFDC2626), Color.White) // Wrong -> Red
+                    } else Triple(Color.White, Color.Gray, Color.Black) // Unattempted -> White/Grey
+                } else {
+                    getColorForStatus(q.status)
+                }
                 
                 Box(
                     modifier = Modifier.padding(4.dp).aspectRatio(1f).clip(shape).background(colorTuple.first).border(1.dp, colorTuple.second, shape).clickable {
@@ -289,20 +375,21 @@ fun PaletteDrawer(viewModel: ExamViewModel, closeDrawer: () -> Unit) {
                     contentAlignment = Alignment.Center
                 ) {
                     Text(q.globalId.toString(), color = colorTuple.third, fontWeight = FontWeight.Bold)
-                    if (q.status == QuestionStatus.ANSWERED_AND_MARKED) {
+                    if (!isReview && q.status == QuestionStatus.ANSWERED_AND_MARKED) {
                         Box(modifier = Modifier.align(Alignment.BottomEnd).padding(2.dp).size(8.dp).clip(CircleShape).background(Color.Green))
                     }
                 }
             }
         }
         
-        // Submit
-        Button(
-            onClick = { viewModel.submitExam() },
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE2E8F0), contentColor = Color.Black),
-            modifier = Modifier.fillMaxWidth().padding(16.dp)
-        ) {
-            Text("Submit Exam", fontWeight = FontWeight.Bold)
+        if (!isReview) {
+            Button(
+                onClick = { viewModel.submitExam(); closeDrawer() },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE2E8F0), contentColor = Color.Black),
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
+            ) {
+                Text("Submit Exam", fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
@@ -319,13 +406,20 @@ fun ResultsScreen(viewModel: ExamViewModel) {
         Spacer(modifier = Modifier.height(16.dp))
         Text("Score: ${viewModel.score.value} / ${test.totalQuestions}", fontSize = 24.sp, color = Color(0xFF1E90FF), fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(32.dp))
-        Button(onClick = { viewModel.appState.value = "MENU" }) {
-            Text("Return to Menu")
+        
+        Button(
+            onClick = { viewModel.appState.value = "REVIEW" },
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E90FF)),
+            modifier = Modifier.fillMaxWidth(0.6f)
+        ) {
+            Text("Review Answers")
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        TextButton(onClick = { viewModel.appState.value = "MENU" }) {
+            Text("Return to Menu", fontWeight = FontWeight.Bold)
         }
     }
 }
-
-// ----------------- Helper UI components for Status shapes -----------------
 
 @Composable
 fun StatusLegendItem(status: QuestionStatus, label: String) {
@@ -345,7 +439,7 @@ fun getShapeForStatus(status: QuestionStatus) = when (status) {
     else -> RoundedCornerShape(4.dp)
 }
 
-fun getColorForStatus(status: QuestionStatus): Triple<Color, Color, Color> = when (status) { // Background, Border, Text
+fun getColorForStatus(status: QuestionStatus): Triple<Color, Color, Color> = when (status) { 
     QuestionStatus.NOT_ANSWERED -> Triple(Color(0xFFE74C3C), Color(0xFFC0392B), Color.White)
     QuestionStatus.ANSWERED -> Triple(Color(0xFF27AE60), Color(0xFF1E8449), Color.White)
     QuestionStatus.MARKED_FOR_REVIEW, QuestionStatus.ANSWERED_AND_MARKED -> Triple(Color(0xFF9B59B6), Color(0xFF7D3C98), Color.White)

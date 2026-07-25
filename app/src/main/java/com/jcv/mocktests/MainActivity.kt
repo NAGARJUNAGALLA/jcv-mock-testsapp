@@ -1,6 +1,7 @@
 package com.jcv.mocktests
 
 import android.os.Bundle
+import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -12,7 +13,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 
@@ -42,6 +45,53 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+// ----------------- MathJax WebView Composable -----------------
+@Composable
+fun MathJaxText(htmlText: String, modifier: Modifier = Modifier) {
+    AndroidView(
+        modifier = modifier,
+        factory = { context ->
+            WebView(context).apply {
+                settings.javaScriptEnabled = true
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                isVerticalScrollBarEnabled = false
+                isHorizontalScrollBarEnabled = false
+            }
+        },
+        update = { webView ->
+            val content = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+                    <script>
+                        window.MathJax = {
+                            tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] },
+                            startup: { typeset: false }
+                        };
+                    </script>
+                    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+                    <style>
+                        body { font-family: 'sans-serif'; font-size: 16px; color: #111827; margin: 0; padding: 0; word-wrap: break-word; background: transparent; }
+                    </style>
+                </head>
+                <body>
+                    $htmlText
+                    <script>
+                        if (window.MathJax && MathJax.typesetPromise) {
+                            MathJax.typesetPromise();
+                        }
+                    </script>
+                </body>
+                </html>
+            """.trimIndent()
+            webView.loadDataWithBaseURL("https://localhost", content, "text/html", "UTF-8", null)
+        }
+    )
+}
+// --------------------------------------------------------------
+
 
 @Composable
 fun AppNavigation(viewModel: ExamViewModel = viewModel()) {
@@ -93,7 +143,6 @@ fun MenuScreen(viewModel: ExamViewModel) {
                         Text(test.title, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         Text("${test.sections.size} Sections • ${test.totalQuestions} Questions", color = Color.Gray, fontSize = 14.sp)
                         
-                        // Show Score Badge
                         if (score != null) {
                             Text(
                                 text = "Score: $score / ${test.totalQuestions}", 
@@ -125,7 +174,7 @@ fun InstructionsScreen(viewModel: ExamViewModel) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Instructions", color = Color.White) },
+                title = { Text("JCV MOCK TESTS", color = Color.White, fontWeight = FontWeight.Black) },
                 navigationIcon = {
                     TextButton(onClick = { viewModel.appState.value = "MENU" }) {
                         Text("Back", color = Color.White)
@@ -174,10 +223,11 @@ fun CBTScreen(viewModel: ExamViewModel) {
     val isReview = viewModel.appState.value == "REVIEW"
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val scrollState = rememberScrollState() // Replaced LazyColumn with ScrollState for better WebView performance
 
     ModalNavigationDrawer(
         drawerState = drawerState,
-        gesturesEnabled = false,
+        gesturesEnabled = true, // CHANGED: Allows closing drawer by tapping anywhere outside
         drawerContent = {
             ModalDrawerSheet(modifier = Modifier.width(320.dp).background(Color.White)) {
                 PaletteDrawer(viewModel) { scope.launch { drawerState.close() } }
@@ -193,7 +243,7 @@ fun CBTScreen(viewModel: ExamViewModel) {
                                 Text("REVIEW MODE", fontSize = 12.sp, modifier = Modifier.background(Color(0x33FFFFFF), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
                             }
-                            Text(test.title, color = Color.White, fontSize = 16.sp, maxLines = 1)
+                            Text("JCV MOCK TESTS", color = Color.White, fontWeight = FontWeight.Black, fontSize = 18.sp, maxLines = 1)
                         }
                     },
                     actions = {
@@ -234,22 +284,26 @@ fun CBTScreen(viewModel: ExamViewModel) {
                 }
                 
                 val currentQ = test.sections[viewModel.currentSectionIndex.value].questions[viewModel.currentQuestionIndex.value]
-                LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                    item {
-                        Text("Q ${currentQ.globalId}.", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.Black)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(currentQ.text, fontSize = 18.sp)
-                        Spacer(modifier = Modifier.height(24.dp))
+                
+                // Using Column + VerticalScroll prevents WebViews from reloading/flashing during recycling
+                Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(scrollState)) {
+                    Text("Q ${currentQ.globalId}.", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.Black)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    // Render Question using MathJax
+                    Box(modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 40.dp)) {
+                        MathJaxText(htmlText = currentQ.text, modifier = Modifier.fillMaxWidth())
                     }
                     
-                    itemsIndexed(currentQ.options) { index, option ->
+                    Spacer(modifier = Modifier.height(24.dp))
+                    
+                    currentQ.options.forEachIndexed { index, option ->
                         val isSelected = currentQ.selectedOption == index
                         val isCorrect = currentQ.correctIndex == index
                         
-                        // STYLING LOGIC FOR REVIEW VS EXAM
                         val cardBg = if (isReview) {
-                            if (isCorrect) Color(0xFFDCFCE7) // Green for correct
-                            else if (isSelected) Color(0xFFFEE2E2) // Red for wrong selection
+                            if (isCorrect) Color(0xFFDCFCE7)
+                            else if (isSelected) Color(0xFFFEE2E2) 
                             else Color.White
                         } else {
                             if (isSelected) Color(0xFFE0F2FE) else Color.White
@@ -264,7 +318,7 @@ fun CBTScreen(viewModel: ExamViewModel) {
                         }
 
                         Card(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp).clickable { viewModel.selectOption(index) },
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
                             colors = CardDefaults.cardColors(containerColor = cardBg),
                             border = BorderStroke(1.dp, borderCol)
                         ) {
@@ -273,10 +327,20 @@ fun CBTScreen(viewModel: ExamViewModel) {
                                     Text(('A' + index).toString(), color = if (isSelected || (isReview && isCorrect)) Color.White else Color.Black, fontWeight = FontWeight.Bold)
                                 }
                                 Spacer(modifier = Modifier.width(12.dp))
-                                Text(option, fontSize = 16.sp)
+                                
+                                // Wrapping MathJax inside a box with a transparent clickable overlay. 
+                                // This intercepts the touch so the WebView doesn't swallow it.
+                                Box(modifier = Modifier.weight(1f).defaultMinSize(minHeight = 32.dp)) {
+                                    MathJaxText(htmlText = option, modifier = Modifier.fillMaxWidth())
+                                    Box(
+                                        modifier = Modifier.matchParentSize().clickable { viewModel.selectOption(index) },
+                                        contentAlignment = Alignment.Center
+                                    ) {}
+                                }
                             }
                         }
                     }
+                    Spacer(modifier = Modifier.height(40.dp)) // padding at bottom
                 }
             }
         }
@@ -356,13 +420,12 @@ fun PaletteDrawer(viewModel: ExamViewModel, closeDrawer: () -> Unit) {
             items(currentSec.questions.size) { qIndex ->
                 val q = currentSec.questions[qIndex]
                 
-                // Review mode shapes vs Exam mode shapes
                 val shape = if (isReview) RoundedCornerShape(4.dp) else getShapeForStatus(q.status)
                 val colorTuple = if (isReview) {
                     if (q.selectedOption != null) {
-                        if (q.selectedOption == q.correctIndex) Triple(Color(0xFF22C55E), Color(0xFF16A34A), Color.White) // Correct -> Green
-                        else Triple(Color(0xFFEF4444), Color(0xFFDC2626), Color.White) // Wrong -> Red
-                    } else Triple(Color.White, Color.Gray, Color.Black) // Unattempted -> White/Grey
+                        if (q.selectedOption == q.correctIndex) Triple(Color(0xFF22C55E), Color(0xFF16A34A), Color.White) 
+                        else Triple(Color(0xFFEF4444), Color(0xFFDC2626), Color.White) 
+                    } else Triple(Color.White, Color.Gray, Color.Black) 
                 } else {
                     getColorForStatus(q.status)
                 }

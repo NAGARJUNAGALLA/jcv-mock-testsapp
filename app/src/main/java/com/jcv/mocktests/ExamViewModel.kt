@@ -6,138 +6,253 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 
+enum class QuestionStatus {
+    NOT_VISITED, NOT_ANSWERED, ANSWERED, MARKED_FOR_REVIEW, ANSWERED_AND_MARKED
+}
+
 data class Question(
-    val id: Int,
+    val globalId: Int,
     val text: String,
     val options: List<String>,
     val correctIndex: Int,
+    var status: QuestionStatus = QuestionStatus.NOT_VISITED,
     var selectedOption: Int? = null
 )
 
+data class TestSection(val name: String, val questions: List<Question>)
+data class ExamTest(val title: String, val sections: List<TestSection>, val totalQuestions: Int)
+
 class ExamViewModel : ViewModel() {
-    val questions = mutableStateListOf<Question>()
-    val currentQuestionIndex = mutableStateOf(0)
-    val isLoading = mutableStateOf(true)
-    val isExamFinished = mutableStateOf(false)
-    val score = mutableStateOf(0)
+    val availableTests = mutableStateListOf<ExamTest>()
+    val selectedTest = mutableStateOf<ExamTest?>(null)
     
-    // New state to show errors on screen instead of infinite loading
-    val errorMessage = mutableStateOf<String?>(null) 
+    val appState = mutableStateOf("LOADING") // LOADING, MENU, INSTRUCTIONS, EXAM, RESULTS
+    val errorMessage = mutableStateOf<String?>(null)
+
+    val currentSectionIndex = mutableStateOf(0)
+    val currentQuestionIndex = mutableStateOf(0)
+    val timeLeft = mutableStateOf(0)
+    
+    val score = mutableStateOf(0)
 
     private val sheetId = "15OOuXOGxXb5YFcCxaovRE-voZN98Kr__IpYlV7h-3oA"
-    private val sheetName = "Sheet3" // Explicitly requesting Sheet3
+    private val sheetName = "Sheet3"
+    private var timerJob: Job? = null
 
     init {
-        fetchQuestions()
+        fetchExamData()
     }
 
-    private fun fetchQuestions() {
+    private fun fetchExamData() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Using the exact same Google Sheets JSON API as your original HTML code
                 val urlString = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&headers=0&sheet=$sheetName"
-                
                 val connection = URL(urlString).openConnection() as HttpsURLConnection
                 connection.requestMethod = "GET"
-                connection.connectTimeout = 15000 // 15 seconds timeout
+                connection.connectTimeout = 15000
                 connection.readTimeout = 15000
 
-                // Read the response
                 val response = connection.inputStream.bufferedReader().use { it.readText() }
-                
-                // Clean the Google visualization wrapper to get pure JSON
                 val jsonString = response.substringAfter("setResponse(").substringBeforeLast(");")
-                
                 val jsonObject = JSONObject(jsonString)
                 val rows = jsonObject.getJSONObject("table").getJSONArray("rows")
-                
-                val qList = mutableListOf<Question>()
-                
-                // Loop through rows (starting at 1 to skip the header)
+
+                // Group by Test Name -> Section Name -> Questions
+                val parsedData = mutableMapOf<String, MutableMap<String, MutableList<Question>>>()
+                var globalIdCounter = 1
+
                 for (i in 1 until rows.length()) {
                     val row = rows.getJSONObject(i)
                     val cArray = row.getJSONArray("c")
                     
-                    // Safe extractor for cell values
-                    fun getCellString(index: Int): String {
+                    fun getCell(index: Int): String {
                         if (cArray.isNull(index)) return ""
                         val cell = cArray.getJSONObject(index)
                         return if (cell.has("v")) cell.getString("v") else ""
                     }
 
-                    val qText = getCellString(2)
+                    val testName = getCell(0).ifBlank { "General Test" }
+                    val secName = getCell(1).ifBlank { "General" }
+                    val qText = getCell(2)
                     if (qText.isBlank()) continue
 
-                    val opt1 = getCellString(3)
-                    val opt2 = getCellString(4)
-                    val opt3 = getCellString(5)
-                    val opt4 = getCellString(6)
+                    val correctRaw = getCell(7).toDoubleOrNull()?.toInt() ?: 1
                     
-                    // Parse correct answer (subtract 1 to match 0-based index)
-                    val correctRaw = getCellString(7).toDoubleOrNull()?.toInt() ?: 1
-                    val correctIndex = (correctRaw - 1).coerceAtLeast(0)
-
-                    qList.add(
-                        Question(
-                            id = i,
-                            text = qText,
-                            options = listOf(opt1, opt2, opt3, opt4).filter { it.isNotBlank() },
-                            correctIndex = correctIndex
-                        )
+                    val q = Question(
+                        globalId = globalIdCounter++,
+                        text = qText.replace("\n", "\n\n"),
+                        options = listOf(getCell(3), getCell(4), getCell(5), getCell(6)).filter { it.isNotBlank() },
+                        correctIndex = (correctRaw - 1).coerceAtLeast(0)
                     )
+
+                    parsedData.getOrPut(testName) { mutableMapOf() }
+                        .getOrPut(secName) { mutableListOf() }
+                        .add(q)
                 }
 
-                // Switch back to the Main UI thread to update the screen
-                viewModelScope.launch(Dispatchers.Main) {
-                    if (qList.isEmpty()) {
-                        errorMessage.value = "No questions found in Sheet3."
-                    } else {
-                        questions.clear()
-                        questions.addAll(qList)
+                val finalTests = parsedData.map { (tName, sMap) ->
+                    var tQuestions = 0
+                    val sections = sMap.map { (sName, qList) ->
+                        tQuestions += qList.size
+                        TestSection(sName, qList)
                     }
-                    isLoading.value = false
+                    ExamTest(tName, sections, tQuestions)
                 }
 
-            } catch (e: Exception) {
-                Log.e("ExamViewModel", "Error fetching data", e)
                 viewModelScope.launch(Dispatchers.Main) {
-                    errorMessage.value = "Failed to load data. Please check your internet connection."
-                    isLoading.value = false // Stop the spinner even if it fails
+                    if (finalTests.isEmpty()) {
+                        errorMessage.value = "No tests found in sheet."
+                    } else {
+                        availableTests.addAll(finalTests)
+                        appState.value = "MENU"
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ExamViewModel", "Fetch Error", e)
+                viewModelScope.launch(Dispatchers.Main) {
+                    errorMessage.value = "Failed to load data. Please check connection."
+                    appState.value = "MENU"
                 }
             }
         }
     }
 
-    fun selectOption(optionIndex: Int) {
-        val currentQ = questions[currentQuestionIndex.value]
-        questions[currentQuestionIndex.value] = currentQ.copy(selectedOption = optionIndex)
+    fun selectTest(test: ExamTest) {
+        selectedTest.value = test
+        currentSectionIndex.value = 0
+        currentQuestionIndex.value = 0
+        
+        // Reset all statuses for a fresh attempt
+        test.sections.forEach { sec ->
+            sec.questions.forEach { q ->
+                q.status = QuestionStatus.NOT_VISITED
+                q.selectedOption = null
+            }
+        }
+        
+        appState.value = "INSTRUCTIONS"
     }
 
-    fun nextQuestion() {
-        if (currentQuestionIndex.value < questions.size - 1) {
-            currentQuestionIndex.value++
+    fun startExam() {
+        val test = selectedTest.value ?: return
+        timeLeft.value = test.totalQuestions * 60 // 1 minute per question
+        appState.value = "EXAM"
+        
+        // Mark first question as not answered upon entering
+        updateCurrentQuestionStatus(QuestionStatus.NOT_ANSWERED, onlyIfNotVisited = true)
+        
+        timerJob?.cancel()
+        timerJob = viewModelScope.launch {
+            while (timeLeft.value > 0) {
+                delay(1000)
+                timeLeft.value--
+            }
+            submitExam()
         }
     }
 
-    fun previousQuestion() {
+    private fun getCurrentQuestion(): Question? {
+        val test = selectedTest.value ?: return null
+        return test.sections.getOrNull(currentSectionIndex.value)?.questions?.getOrNull(currentQuestionIndex.value)
+    }
+
+    private fun updateCurrentQuestionStatus(newStatus: QuestionStatus, onlyIfNotVisited: Boolean = false) {
+        val q = getCurrentQuestion() ?: return
+        if (onlyIfNotVisited && q.status != QuestionStatus.NOT_VISITED) return
+        
+        // Adjust status based on if an option is actually selected
+        val finalStatus = when (newStatus) {
+            QuestionStatus.MARKED_FOR_REVIEW -> if (q.selectedOption != null) QuestionStatus.ANSWERED_AND_MARKED else QuestionStatus.MARKED_FOR_REVIEW
+            QuestionStatus.ANSWERED -> if (q.selectedOption != null) QuestionStatus.ANSWERED else QuestionStatus.NOT_ANSWERED
+            else -> newStatus
+        }
+        q.status = finalStatus
+    }
+
+    fun selectOption(index: Int) {
+        val q = getCurrentQuestion() ?: return
+        q.selectedOption = index
+    }
+
+    fun clearResponse() {
+        val q = getCurrentQuestion() ?: return
+        q.selectedOption = null
+        q.status = QuestionStatus.NOT_ANSWERED
+    }
+
+    fun saveAndNext() {
+        updateCurrentQuestionStatus(QuestionStatus.ANSWERED)
+        moveToNext()
+    }
+
+    fun markAndNext() {
+        updateCurrentQuestionStatus(QuestionStatus.MARKED_FOR_REVIEW)
+        moveToNext()
+    }
+
+    fun moveToPrevious() {
         if (currentQuestionIndex.value > 0) {
             currentQuestionIndex.value--
+        } else if (currentSectionIndex.value > 0) {
+            currentSectionIndex.value--
+            currentQuestionIndex.value = (selectedTest.value?.sections?.get(currentSectionIndex.value)?.questions?.size ?: 1) - 1
         }
+        updateCurrentQuestionStatus(QuestionStatus.NOT_ANSWERED, onlyIfNotVisited = true)
+    }
+
+    private fun moveToNext() {
+        val test = selectedTest.value ?: return
+        val currentSec = test.sections[currentSectionIndex.value]
+        
+        if (currentQuestionIndex.value < currentSec.questions.size - 1) {
+            currentQuestionIndex.value++
+        } else if (currentSectionIndex.value < test.sections.size - 1) {
+            currentSectionIndex.value++
+            currentQuestionIndex.value = 0
+        }
+        updateCurrentQuestionStatus(QuestionStatus.NOT_ANSWERED, onlyIfNotVisited = true)
+    }
+
+    fun jumpToQuestion(sectionIdx: Int, questionIdx: Int) {
+        currentSectionIndex.value = sectionIdx
+        currentQuestionIndex.value = questionIdx
+        updateCurrentQuestionStatus(QuestionStatus.NOT_ANSWERED, onlyIfNotVisited = true)
     }
 
     fun submitExam() {
+        timerJob?.cancel()
         var calculatedScore = 0
-        for (q in questions) {
-            if (q.selectedOption == q.correctIndex) {
-                calculatedScore++
+        selectedTest.value?.sections?.forEach { sec ->
+            sec.questions.forEach { q ->
+                if (q.selectedOption == q.correctIndex) {
+                    calculatedScore++
+                }
             }
         }
         score.value = calculatedScore
-        isExamFinished.value = true
+        appState.value = "RESULTS"
+    }
+
+    fun getStats(): Map<QuestionStatus, Int> {
+        val stats = mutableMapOf(
+            QuestionStatus.NOT_VISITED to 0,
+            QuestionStatus.NOT_ANSWERED to 0,
+            QuestionStatus.ANSWERED to 0,
+            QuestionStatus.MARKED_FOR_REVIEW to 0,
+            QuestionStatus.ANSWERED_AND_MARKED to 0
+        )
+        selectedTest.value?.sections?.forEach { sec ->
+            sec.questions.forEach { q ->
+                stats[q.status] = (stats[q.status] ?: 0) + 1
+            }
+        }
+        return stats
     }
 }

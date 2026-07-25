@@ -15,9 +15,21 @@ android {
         versionName = "1.0"
     }
 
+    // Explicitly set Java compatibility to Java 17
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    // Explicitly set Kotlin JVM target to Java 17
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
     buildFeatures {
         compose = true
     }
+    
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.1"
     }

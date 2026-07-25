@@ -1,19 +1,22 @@
 package com.jcv.mocktests
 
+import android.util.Log
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import java.net.URL
+import javax.net.ssl.HttpsURLConnection
 
 data class Question(
     val id: Int,
     val text: String,
     val options: List<String>,
     val correctIndex: Int,
-    var selectedOption: Int? = null // null means not answered
+    var selectedOption: Int? = null
 )
 
 class ExamViewModel : ViewModel() {
@@ -22,9 +25,12 @@ class ExamViewModel : ViewModel() {
     val isLoading = mutableStateOf(true)
     val isExamFinished = mutableStateOf(false)
     val score = mutableStateOf(0)
+    
+    // New state to show errors on screen instead of infinite loading
+    val errorMessage = mutableStateOf<String?>(null) 
 
-    // REPLACE WITH YOUR GOOGLE SHEET ID
-    private val sheetId = "15OOuXOGxXb5YFcCxaovRE-voZN98Kr__IpYlV7h-3oA" 
+    private val sheetId = "15OOuXOGxXb5YFcCxaovRE-voZN98Kr__IpYlV7h-3oA"
+    private val sheetName = "Sheet3" // Explicitly requesting Sheet3
 
     init {
         fetchQuestions()
@@ -33,42 +39,78 @@ class ExamViewModel : ViewModel() {
     private fun fetchQuestions() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Fetching as CSV is easier to parse natively in Kotlin than the gviz JSON
-                val url = "https://docs.google.com/spreadsheets/d/$sheetId/export?format=csv"
-                val csvData = URL(url).readText()
+                // Using the exact same Google Sheets JSON API as your original HTML code
+                val urlString = "https://docs.google.com/spreadsheets/d/$sheetId/gviz/tq?tqx=out:json&headers=0&sheet=$sheetName"
                 
-                val parsedQuestions = parseCsv(csvData)
+                val connection = URL(urlString).openConnection() as HttpsURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 15000 // 15 seconds timeout
+                connection.readTimeout = 15000
+
+                // Read the response
+                val response = connection.inputStream.bufferedReader().use { it.readText() }
                 
+                // Clean the Google visualization wrapper to get pure JSON
+                val jsonString = response.substringAfter("setResponse(").substringBeforeLast(");")
+                
+                val jsonObject = JSONObject(jsonString)
+                val rows = jsonObject.getJSONObject("table").getJSONArray("rows")
+                
+                val qList = mutableListOf<Question>()
+                
+                // Loop through rows (starting at 1 to skip the header)
+                for (i in 1 until rows.length()) {
+                    val row = rows.getJSONObject(i)
+                    val cArray = row.getJSONArray("c")
+                    
+                    // Safe extractor for cell values
+                    fun getCellString(index: Int): String {
+                        if (cArray.isNull(index)) return ""
+                        val cell = cArray.getJSONObject(index)
+                        return if (cell.has("v")) cell.getString("v") else ""
+                    }
+
+                    val qText = getCellString(2)
+                    if (qText.isBlank()) continue
+
+                    val opt1 = getCellString(3)
+                    val opt2 = getCellString(4)
+                    val opt3 = getCellString(5)
+                    val opt4 = getCellString(6)
+                    
+                    // Parse correct answer (subtract 1 to match 0-based index)
+                    val correctRaw = getCellString(7).toDoubleOrNull()?.toInt() ?: 1
+                    val correctIndex = (correctRaw - 1).coerceAtLeast(0)
+
+                    qList.add(
+                        Question(
+                            id = i,
+                            text = qText,
+                            options = listOf(opt1, opt2, opt3, opt4).filter { it.isNotBlank() },
+                            correctIndex = correctIndex
+                        )
+                    )
+                }
+
+                // Switch back to the Main UI thread to update the screen
                 viewModelScope.launch(Dispatchers.Main) {
-                    questions.clear()
-                    questions.addAll(parsedQuestions)
+                    if (qList.isEmpty()) {
+                        errorMessage.value = "No questions found in Sheet3."
+                    } else {
+                        questions.clear()
+                        questions.addAll(qList)
+                    }
                     isLoading.value = false
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
 
-    private fun parseCsv(csv: String): List<Question> {
-        val lines = csv.lines().drop(1) // Drop header row
-        val qList = mutableListOf<Question>()
-        
-        for ((index, line) in lines.withIndex()) {
-            if (line.isBlank()) continue
-            val parts = line.split(",") // Basic CSV split
-            if (parts.size >= 8) {
-                qList.add(
-                    Question(
-                        id = index + 1,
-                        text = parts[2],
-                        options = listOf(parts[3], parts[4], parts[5], parts[6]),
-                        correctIndex = parts[7].toIntOrNull()?.minus(1) ?: 0
-                    )
-                )
+            } catch (e: Exception) {
+                Log.e("ExamViewModel", "Error fetching data", e)
+                viewModelScope.launch(Dispatchers.Main) {
+                    errorMessage.value = "Failed to load data. Please check your internet connection."
+                    isLoading.value = false // Stop the spinner even if it fails
+                }
             }
         }
-        return qList
     }
 
     fun selectOption(optionIndex: Int) {

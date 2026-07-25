@@ -1,12 +1,14 @@
 package com.jcv.mocktests
 
+import android.app.Application
+import android.content.Context
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,7 +23,7 @@ enum class QuestionStatus {
 }
 
 class Question(
-    var globalId: Int, // Changed to var so we can dynamically re-assign per test
+    var globalId: Int,
     val text: String,
     val options: List<String>,
     val correctIndex: Int
@@ -33,11 +35,15 @@ class Question(
 data class TestSection(val name: String, val questions: List<Question>)
 data class ExamTest(val title: String, val sections: List<TestSection>, val totalQuestions: Int)
 
-class ExamViewModel : ViewModel() {
+class ExamViewModel(application: Application) : AndroidViewModel(application) {
+    
+    private val prefs = application.getSharedPreferences("JcvMockTestsStorage", Context.MODE_PRIVATE)
+
     val availableTests = mutableStateListOf<ExamTest>()
     val selectedTest = mutableStateOf<ExamTest?>(null)
     
     val testScores = mutableStateMapOf<String, Int>()
+    val savedAnswers = mutableMapOf<String, Map<Int, Int>>() // Test Title -> (Global Q ID -> Selected Option)
     
     val appState = mutableStateOf("LOADING")
     val errorMessage = mutableStateOf<String?>(null)
@@ -53,7 +59,44 @@ class ExamViewModel : ViewModel() {
     private var timerJob: Job? = null
 
     init {
+        loadLocalData()
         fetchExamData()
+    }
+
+    private fun loadLocalData() {
+        try {
+            val scoresJson = prefs.getString("scores", "{}")
+            val answersJson = prefs.getString("answers", "{}")
+
+            val sObj = JSONObject(scoresJson!!)
+            sObj.keys().forEach { testScores[it] = sObj.getInt(it) }
+
+            val aObj = JSONObject(answersJson!!)
+            aObj.keys().forEach { testName ->
+                val qMap = mutableMapOf<Int, Int>()
+                val qObj = aObj.getJSONObject(testName)
+                qObj.keys().forEach { qId ->
+                    qMap[qId.toInt()] = qObj.getInt(qId)
+                }
+                savedAnswers[testName] = qMap
+            }
+        } catch (e: Exception) {
+            Log.e("ExamViewModel", "Error loading local storage", e)
+        }
+    }
+
+    private fun saveLocalData() {
+        val sObj = JSONObject()
+        testScores.forEach { (k, v) -> sObj.put(k, v) }
+        prefs.edit().putString("scores", sObj.toString()).apply()
+
+        val aObj = JSONObject()
+        savedAnswers.forEach { (testName, qMap) ->
+            val qObj = JSONObject()
+            qMap.forEach { (qId, ans) -> qObj.put(qId.toString(), ans) }
+            aObj.put(testName, qObj)
+        }
+        prefs.edit().putString("answers", aObj.toString()).apply()
     }
 
     private fun fetchExamData() {
@@ -85,14 +128,13 @@ class ExamViewModel : ViewModel() {
                     val testName = getCell(0).ifBlank { "General Test" }
                     val secName = getCell(1).ifBlank { "General" }
                     
-                    // Replace standard newlines with HTML breaks for the MathJax WebView
                     val qText = getCell(2).replace("\n", "<br>")
                     if (qText.isBlank()) continue
 
                     val correctRaw = getCell(7).toDoubleOrNull()?.toInt() ?: 1
                     
                     val q = Question(
-                        globalId = 0, // Will assign proper ID below
+                        globalId = 0, 
                         text = qText,
                         options = listOf(
                             getCell(3).replace("\n", "<br>"), 
@@ -108,10 +150,9 @@ class ExamViewModel : ViewModel() {
                         .add(q)
                 }
 
-                // Final Assembly: Reset Question Numbers (globalId) to start from 1 for EVERY test
                 val finalTests = parsedData.map { (tName, sMap) ->
                     var tQuestions = 0
-                    var localIdCounter = 1 // Starts at 1 for this specific test
+                    var localIdCounter = 1 
                     
                     val sections = sMap.map { (sName, qList) ->
                         tQuestions += qList.size
@@ -145,6 +186,13 @@ class ExamViewModel : ViewModel() {
         currentQuestionIndex.value = 0
         
         if (testScores.containsKey(test.title)) {
+            val previousAnswers = savedAnswers[test.title] ?: emptyMap()
+            test.sections.forEach { sec ->
+                sec.questions.forEach { q ->
+                    q.selectedOption = previousAnswers[q.globalId]
+                    q.status = if (q.selectedOption != null) QuestionStatus.ANSWERED else QuestionStatus.NOT_ANSWERED
+                }
+            }
             appState.value = "REVIEW"
         } else {
             test.sections.forEach { sec ->
@@ -259,15 +307,26 @@ class ExamViewModel : ViewModel() {
         var calculatedScore = 0
         val test = selectedTest.value ?: return
         
+        val currentAnswers = mutableMapOf<Int, Int>()
+        
         test.sections.forEach { sec ->
             sec.questions.forEach { q ->
-                if (q.selectedOption == q.correctIndex) {
-                    calculatedScore++
+                if (q.selectedOption != null) {
+                    currentAnswers[q.globalId] = q.selectedOption!!
+                    if (q.selectedOption == q.correctIndex) {
+                        calculatedScore++
+                    }
                 }
             }
         }
+        
         score.value = calculatedScore
         testScores[test.title] = calculatedScore 
+        savedAnswers[test.title] = currentAnswers
+        
+        // Save to device storage
+        saveLocalData()
+        
         appState.value = "RESULTS"
     }
 

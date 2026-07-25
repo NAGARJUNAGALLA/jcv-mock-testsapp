@@ -18,11 +18,9 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Grant Execute Permission to Gradle
-        run: chmod +x gradlew
-
+      # Use the system 'gradle' command instead of the missing './gradlew' file
       - name: Build Debug APK and AAB
-        run: ./gradlew assembleDebug bundleDebug
+        run: gradle assembleDebug bundleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

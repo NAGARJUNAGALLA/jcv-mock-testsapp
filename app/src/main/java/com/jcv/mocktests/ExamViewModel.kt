@@ -20,9 +20,8 @@ enum class QuestionStatus {
     NOT_VISITED, NOT_ANSWERED, ANSWERED, MARKED_FOR_REVIEW, ANSWERED_AND_MARKED
 }
 
-// CHANGED: Converted to a regular class with mutableStateOf so the UI updates instantly when clicked
 class Question(
-    val globalId: Int,
+    var globalId: Int, // Changed to var so we can dynamically re-assign per test
     val text: String,
     val options: List<String>,
     val correctIndex: Int
@@ -38,10 +37,9 @@ class ExamViewModel : ViewModel() {
     val availableTests = mutableStateListOf<ExamTest>()
     val selectedTest = mutableStateOf<ExamTest?>(null)
     
-    // Tracks completed tests: Test Title -> Score
     val testScores = mutableStateMapOf<String, Int>()
     
-    val appState = mutableStateOf("LOADING") // LOADING, MENU, INSTRUCTIONS, EXAM, REVIEW, RESULTS
+    val appState = mutableStateOf("LOADING")
     val errorMessage = mutableStateOf<String?>(null)
 
     val currentSectionIndex = mutableStateOf(0)
@@ -73,7 +71,6 @@ class ExamViewModel : ViewModel() {
                 val rows = jsonObject.getJSONObject("table").getJSONArray("rows")
 
                 val parsedData = mutableMapOf<String, MutableMap<String, MutableList<Question>>>()
-                var globalIdCounter = 1
 
                 for (i in 1 until rows.length()) {
                     val row = rows.getJSONObject(i)
@@ -87,15 +84,22 @@ class ExamViewModel : ViewModel() {
 
                     val testName = getCell(0).ifBlank { "General Test" }
                     val secName = getCell(1).ifBlank { "General" }
-                    val qText = getCell(2)
+                    
+                    // Replace standard newlines with HTML breaks for the MathJax WebView
+                    val qText = getCell(2).replace("\n", "<br>")
                     if (qText.isBlank()) continue
 
                     val correctRaw = getCell(7).toDoubleOrNull()?.toInt() ?: 1
                     
                     val q = Question(
-                        globalId = globalIdCounter++,
-                        text = qText.replace("\n", "\n\n"),
-                        options = listOf(getCell(3), getCell(4), getCell(5), getCell(6)).filter { it.isNotBlank() },
+                        globalId = 0, // Will assign proper ID below
+                        text = qText,
+                        options = listOf(
+                            getCell(3).replace("\n", "<br>"), 
+                            getCell(4).replace("\n", "<br>"), 
+                            getCell(5).replace("\n", "<br>"), 
+                            getCell(6).replace("\n", "<br>")
+                        ).filter { it.isNotBlank() },
                         correctIndex = (correctRaw - 1).coerceAtLeast(0)
                     )
 
@@ -104,10 +108,14 @@ class ExamViewModel : ViewModel() {
                         .add(q)
                 }
 
+                // Final Assembly: Reset Question Numbers (globalId) to start from 1 for EVERY test
                 val finalTests = parsedData.map { (tName, sMap) ->
                     var tQuestions = 0
+                    var localIdCounter = 1 // Starts at 1 for this specific test
+                    
                     val sections = sMap.map { (sName, qList) ->
                         tQuestions += qList.size
+                        qList.forEach { it.globalId = localIdCounter++ }
                         TestSection(sName, qList)
                     }
                     ExamTest(tName, sections, tQuestions)
@@ -136,7 +144,6 @@ class ExamViewModel : ViewModel() {
         currentSectionIndex.value = 0
         currentQuestionIndex.value = 0
         
-        // If test is completed, open Review Mode. Else, open Instructions.
         if (testScores.containsKey(test.title)) {
             appState.value = "REVIEW"
         } else {
@@ -260,7 +267,7 @@ class ExamViewModel : ViewModel() {
             }
         }
         score.value = calculatedScore
-        testScores[test.title] = calculatedScore // Save score to display on menu
+        testScores[test.title] = calculatedScore 
         appState.value = "RESULTS"
     }
 

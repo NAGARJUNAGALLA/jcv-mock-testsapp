@@ -37,8 +37,18 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ExamScreen(viewModel: ExamViewModel = viewModel()) {
     if (viewModel.isLoading.value) {
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-            CircularProgressIndicator()
+        // THIS IS THE UPDATED LOADING SCREEN
+        Box(
+            contentAlignment = Alignment.Center, 
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.White)
+        ) {
+            CircularProgressIndicator(
+                color = Color(0xFF673AB7), // Deep purple matching your screenshot
+                strokeWidth = 4.dp,
+                modifier = Modifier.size(60.dp)
+            )
         }
     } else if (viewModel.isExamFinished.value) {
         ResultScreen(viewModel.score.value, viewModel.questions.size)

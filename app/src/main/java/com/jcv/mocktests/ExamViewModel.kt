@@ -1,8 +1,11 @@
 package com.jcv.mocktests
 
 import android.util.Log
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -17,14 +20,16 @@ enum class QuestionStatus {
     NOT_VISITED, NOT_ANSWERED, ANSWERED, MARKED_FOR_REVIEW, ANSWERED_AND_MARKED
 }
 
-data class Question(
+// CHANGED: Converted to a regular class with mutableStateOf so the UI updates instantly when clicked
+class Question(
     val globalId: Int,
     val text: String,
     val options: List<String>,
-    val correctIndex: Int,
-    var status: QuestionStatus = QuestionStatus.NOT_VISITED,
-    var selectedOption: Int? = null
-)
+    val correctIndex: Int
+) {
+    var status by mutableStateOf(QuestionStatus.NOT_VISITED)
+    var selectedOption by mutableStateOf<Int?>(null)
+}
 
 data class TestSection(val name: String, val questions: List<Question>)
 data class ExamTest(val title: String, val sections: List<TestSection>, val totalQuestions: Int)
@@ -33,7 +38,10 @@ class ExamViewModel : ViewModel() {
     val availableTests = mutableStateListOf<ExamTest>()
     val selectedTest = mutableStateOf<ExamTest?>(null)
     
-    val appState = mutableStateOf("LOADING") // LOADING, MENU, INSTRUCTIONS, EXAM, RESULTS
+    // Tracks completed tests: Test Title -> Score
+    val testScores = mutableStateMapOf<String, Int>()
+    
+    val appState = mutableStateOf("LOADING") // LOADING, MENU, INSTRUCTIONS, EXAM, REVIEW, RESULTS
     val errorMessage = mutableStateOf<String?>(null)
 
     val currentSectionIndex = mutableStateOf(0)
@@ -64,7 +72,6 @@ class ExamViewModel : ViewModel() {
                 val jsonObject = JSONObject(jsonString)
                 val rows = jsonObject.getJSONObject("table").getJSONArray("rows")
 
-                // Group by Test Name -> Section Name -> Questions
                 val parsedData = mutableMapOf<String, MutableMap<String, MutableList<Question>>>()
                 var globalIdCounter = 1
 
@@ -129,23 +136,25 @@ class ExamViewModel : ViewModel() {
         currentSectionIndex.value = 0
         currentQuestionIndex.value = 0
         
-        // Reset all statuses for a fresh attempt
-        test.sections.forEach { sec ->
-            sec.questions.forEach { q ->
-                q.status = QuestionStatus.NOT_VISITED
-                q.selectedOption = null
+        // If test is completed, open Review Mode. Else, open Instructions.
+        if (testScores.containsKey(test.title)) {
+            appState.value = "REVIEW"
+        } else {
+            test.sections.forEach { sec ->
+                sec.questions.forEach { q ->
+                    q.status = QuestionStatus.NOT_VISITED
+                    q.selectedOption = null
+                }
             }
+            appState.value = "INSTRUCTIONS"
         }
-        
-        appState.value = "INSTRUCTIONS"
     }
 
     fun startExam() {
         val test = selectedTest.value ?: return
-        timeLeft.value = test.totalQuestions * 60 // 1 minute per question
+        timeLeft.value = test.totalQuestions * 60 
         appState.value = "EXAM"
         
-        // Mark first question as not answered upon entering
         updateCurrentQuestionStatus(QuestionStatus.NOT_ANSWERED, onlyIfNotVisited = true)
         
         timerJob?.cancel()
@@ -164,10 +173,10 @@ class ExamViewModel : ViewModel() {
     }
 
     private fun updateCurrentQuestionStatus(newStatus: QuestionStatus, onlyIfNotVisited: Boolean = false) {
+        if (appState.value == "REVIEW") return
         val q = getCurrentQuestion() ?: return
         if (onlyIfNotVisited && q.status != QuestionStatus.NOT_VISITED) return
         
-        // Adjust status based on if an option is actually selected
         val finalStatus = when (newStatus) {
             QuestionStatus.MARKED_FOR_REVIEW -> if (q.selectedOption != null) QuestionStatus.ANSWERED_AND_MARKED else QuestionStatus.MARKED_FOR_REVIEW
             QuestionStatus.ANSWERED -> if (q.selectedOption != null) QuestionStatus.ANSWERED else QuestionStatus.NOT_ANSWERED
@@ -177,19 +186,25 @@ class ExamViewModel : ViewModel() {
     }
 
     fun selectOption(index: Int) {
+        if (appState.value == "REVIEW") return
         val q = getCurrentQuestion() ?: return
         q.selectedOption = index
     }
 
     fun clearResponse() {
+        if (appState.value == "REVIEW") return
         val q = getCurrentQuestion() ?: return
         q.selectedOption = null
         q.status = QuestionStatus.NOT_ANSWERED
     }
 
     fun saveAndNext() {
-        updateCurrentQuestionStatus(QuestionStatus.ANSWERED)
-        moveToNext()
+        if (appState.value == "REVIEW") {
+            moveToNext()
+        } else {
+            updateCurrentQuestionStatus(QuestionStatus.ANSWERED)
+            moveToNext()
+        }
     }
 
     fun markAndNext() {
@@ -204,7 +219,9 @@ class ExamViewModel : ViewModel() {
             currentSectionIndex.value--
             currentQuestionIndex.value = (selectedTest.value?.sections?.get(currentSectionIndex.value)?.questions?.size ?: 1) - 1
         }
-        updateCurrentQuestionStatus(QuestionStatus.NOT_ANSWERED, onlyIfNotVisited = true)
+        if (appState.value != "REVIEW") {
+            updateCurrentQuestionStatus(QuestionStatus.NOT_ANSWERED, onlyIfNotVisited = true)
+        }
     }
 
     private fun moveToNext() {
@@ -217,19 +234,25 @@ class ExamViewModel : ViewModel() {
             currentSectionIndex.value++
             currentQuestionIndex.value = 0
         }
-        updateCurrentQuestionStatus(QuestionStatus.NOT_ANSWERED, onlyIfNotVisited = true)
+        if (appState.value != "REVIEW") {
+            updateCurrentQuestionStatus(QuestionStatus.NOT_ANSWERED, onlyIfNotVisited = true)
+        }
     }
 
     fun jumpToQuestion(sectionIdx: Int, questionIdx: Int) {
         currentSectionIndex.value = sectionIdx
         currentQuestionIndex.value = questionIdx
-        updateCurrentQuestionStatus(QuestionStatus.NOT_ANSWERED, onlyIfNotVisited = true)
+        if (appState.value != "REVIEW") {
+            updateCurrentQuestionStatus(QuestionStatus.NOT_ANSWERED, onlyIfNotVisited = true)
+        }
     }
 
     fun submitExam() {
         timerJob?.cancel()
         var calculatedScore = 0
-        selectedTest.value?.sections?.forEach { sec ->
+        val test = selectedTest.value ?: return
+        
+        test.sections.forEach { sec ->
             sec.questions.forEach { q ->
                 if (q.selectedOption == q.correctIndex) {
                     calculatedScore++
@@ -237,6 +260,7 @@ class ExamViewModel : ViewModel() {
             }
         }
         score.value = calculatedScore
+        testScores[test.title] = calculatedScore // Save score to display on menu
         appState.value = "RESULTS"
     }
 
@@ -254,5 +278,18 @@ class ExamViewModel : ViewModel() {
             }
         }
         return stats
+    }
+    
+    fun getReviewStats(): Pair<Int, Int> {
+        var correct = 0
+        var incorrect = 0
+        selectedTest.value?.sections?.forEach { sec ->
+            sec.questions.forEach { q ->
+                if (q.selectedOption != null) {
+                    if (q.selectedOption == q.correctIndex) correct++ else incorrect++
+                }
+            }
+        }
+        return Pair(correct, incorrect)
     }
 }
